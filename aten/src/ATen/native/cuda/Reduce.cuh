@@ -1159,6 +1159,9 @@ ReduceConfig setReduceConfig(const TensorIterator& iter){
       config.ctas_per_output = div_up(num_mp, 2);
     else if (config.ctas_per_output < 16)
       config.ctas_per_output = 1;
+    bool is_channel_last = iter.tensor_base(1).is_contiguous(at::MemoryFormat::ChannelsLast);
+    if (iter.ndim() == 3 && !reduction_on_fastest_striding_dimension && !is_channel_last)
+      config.ctas_per_output = 4;
 #endif
     if (config.ctas_per_output > 1) {
       config.input_mult[2] = config.split_input(config.ctas_per_output);

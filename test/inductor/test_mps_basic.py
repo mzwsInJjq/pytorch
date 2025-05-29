@@ -3,6 +3,8 @@ import importlib
 import os
 import sys
 
+import numpy as np
+
 import torch
 from torch.testing import make_tensor
 from torch.testing._internal.common_dtype import get_all_dtypes
@@ -34,6 +36,7 @@ from inductor.test_torchinductor import (  # @manual=fbcode//caffe2/test/inducto
 # This tests basic MPS compile functionality
 
 
+@instantiate_parametrized_tests
 class MPSBasicTests(TestCase):
     is_dtype_supported = CommonTemplate.is_dtype_supported
     common = check_model_gpu
@@ -82,14 +85,64 @@ class MPSBasicTests(TestCase):
     def test_cast(self, dtype):
         self.common(lambda a: a.to(dtype), (torch.rand(1024),))
 
-    def test_pointwise_i0(self):
-        self.common(torch.special.i0, (torch.rand(128, 128),), check_lowp=False)
+    pointwise_unary_ops = [
+        "i0",
+        "i0e",
+        "i1",
+        "i1e",
+        "erf",
+        "digamma",
+        "sinc",
+        "spherical_bessel_j0",
+        "bessel_j0",
+        "bessel_j1",
+        "bessel_y0",
+        "bessel_y1",
+        "modified_bessel_i0",
+        "modified_bessel_i1",
+        "modified_bessel_k0",
+        "modified_bessel_k1",
+        "scaled_modified_bessel_k0",
+        "scaled_modified_bessel_k1",
+        "entr",
+    ]
 
-    def test_pointwise_i1(self):
-        self.common(torch.special.i1, (torch.rand(128, 128),), check_lowp=False)
+    @parametrize("op_name", pointwise_unary_ops)
+    def test_pointwise_unary_op(self, op_name):
+        self.common(
+            lambda x: getattr(torch.special, op_name)(x),
+            (torch.rand(128, 128),),
+            check_lowp=False,
+        )
 
-    def test_pointwise_erf(self):
-        self.common(torch.special.erf, (torch.rand(128, 128),), check_lowp=False)
+    def test_pointwise_polygamma(self):
+        self.common(
+            torch.special.polygamma,
+            (
+                1,
+                torch.rand(128, 128),
+            ),
+            check_lowp=False,
+        )
+
+    @parametrize(
+        "op_name",
+        [
+            "zeta",
+            "xlog1py",
+            "chebyshev_polynomial_t",
+            "chebyshev_polynomial_u",
+            "chebyshev_polynomial_v",
+            "chebyshev_polynomial_w",
+            "hermite_polynomial_he",
+        ],
+    )
+    def test_pointwise_binary_op(self, op_name):
+        self.common(
+            lambda x, y: getattr(torch.special, op_name)(x, y),
+            (torch.rand(128, 128), torch.rand(128, 128)),
+            check_lowp=False,
+        )
 
     def test_broadcast(self):
         self.common(torch.add, (torch.rand(32, 1024), torch.rand(1024)))
@@ -101,63 +154,48 @@ class MPSBasicTests(TestCase):
 
         self.common(inc_, (torch.rand(1024),))
 
+    def test_rms_norm_nograd(self):
+        # Regression test for https://github.com/pytorch/pytorch/issues/150629
+        def fn(x, w):
+            with torch.no_grad():
+                return torch.nn.functional.rms_norm(x, x.shape, w)
 
-# Copy tests
-for test_name in [
-    "test_add_const_int",
-    "test_add_inplace_permuted",
-    "test_addmm",
-    "test_arange5",
-    "test_argmax_min_int32",
-    "test_avg_pool2d5",
-    "test_avg_pool2d8",
-    "test_builtins_round",
-    "test_builtins_round_float_ndigits_neg",
-    "test_cat_empty",
-    "test_cat_unbacked_empty_1d",
-    "test_custom_op_2",
-    "test_div1",
-    "test_div3",
-    "test_erfinv",
-    "test_floordiv",
-    "test_full_truncation",
-    "test_fmod",
-    "test_fmod_zero_dim",
-    "test_index_dynamic_shapes",
-    "test_inf",
-    "test_isinf",
-    "test_isinf2",
-    "test_lgamma",
-    "test_log_fp64",
-    "test_low_memory_max_pool",
-    "test_max_min",
-    "test_max_pool2d2",
-    "test_nan_to_num",
-    "test_pow2",
-    "test_randint_int64_mod",
-    "test_randn_generator",
-    "test_remainder",
-    "test_remove_no_ops",
-    "test_reflection_pad2d",
-    "test_rsqrt",
-    "test_scalar_cpu_tensor_arg",
-    "test_scalar_output",
-    "test_setitem_with_int_parameter",
-    "test_signbit",
-    "test_silu",
-    "test_slice_scatter4",
-    "test_sort",
-    "test_tanh",
-    "test_view_as_complex",
-    "test_view_on_aliased",
-    "test_views3",
-    "test_views6",
-    "test_views7",
-    "test_zero_dim_reductions",
-]:
-    setattr(MPSBasicTests, test_name, getattr(CommonTemplate, test_name))
+        self.common(fn, (torch.rand(10), torch.ones(10)))
 
-instantiate_parametrized_tests(MPSBasicTests)
+    def test_compile_numpy_scalar(self):
+        def fn(x, y):
+            return x / y
+
+        self.common(fn, (torch.rand(10), np.exp(0.3)))
+
+    def test_conv_transpose_channels_last(self):
+        def fn(x, y):
+            return torch.nn.functional.conv_transpose2d(x, y, stride=1, padding=1)
+
+        self.common(
+            fn,
+            (
+                torch.rand(1, 1, 16, 16).to(memory_format=torch.channels_last),
+                torch.rand(1, 4, 8, 8),
+            ),
+        )
+
+
+class MPSBasicTestsAOTI(TestCase):
+    def test_add_mps(self):
+        class M(torch.nn.Module):
+            def forward(self, x, y):
+                return x + y
+
+        inp = (torch.ones(3, 3, device="mps"), torch.ones(3, 3, device="mps"))
+        m = M().to("mps")
+        res2 = m(*inp)
+        ep = torch.export.export(m, inp)
+        path = torch._inductor.aoti_compile_and_package(ep, "here.pt2")
+        m = torch._inductor.aoti_load_package(path)
+        res = m(*inp)
+        assert torch.allclose(res, res2)
+
 
 if __name__ == "__main__":
     from torch._dynamo.test_case import run_tests

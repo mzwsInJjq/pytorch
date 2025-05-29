@@ -14,6 +14,7 @@ export USE_CUDA_STATIC_LINK=1
 export INSTALL_TEST=0 # dont install test binaries into site-packages
 export USE_CUPTI_SO=0
 export USE_CUSPARSELT=${USE_CUSPARSELT:-1} # Enable if not disabled by libtorch build
+export USE_CUFILE=${USE_CUFILE:-1}
 
 # Keep an array of cmake variables to add to
 if [[ -z "$CMAKE_ARGS" ]]; then
@@ -35,10 +36,8 @@ if [[ -n "$DESIRED_CUDA" ]]; then
     if [[ ${DESIRED_CUDA} =~ ^[0-9]+\.[0-9]+$ ]]; then
         CUDA_VERSION=${DESIRED_CUDA}
     else
-        # cu90, cu92, cu100, cu101
-        if [[ ${#DESIRED_CUDA} -eq 4 ]]; then
-            CUDA_VERSION="${DESIRED_CUDA:2:1}.${DESIRED_CUDA:3:1}"
-        elif [[ ${#DESIRED_CUDA} -eq 5 ]]; then
+        # cu126, cu128 etc...
+        if [[ ${#DESIRED_CUDA} -eq 5 ]]; then
             CUDA_VERSION="${DESIRED_CUDA:2:2}.${DESIRED_CUDA:4:1}"
         fi
     fi
@@ -52,11 +51,11 @@ cuda_version_nodot=$(echo $CUDA_VERSION | tr -d '.')
 
 TORCH_CUDA_ARCH_LIST="5.0;6.0;7.0;7.5;8.0;8.6"
 case ${CUDA_VERSION} in
-    12.6)
-        TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST};9.0+PTX"
+    12.8)
+        TORCH_CUDA_ARCH_LIST="7.5;8.0;8.6;9.0;10.0;12.0+PTX" #removing sm_50-sm_70 as these architectures are deprecated in CUDA 12.8 and will be removed in future releases
         EXTRA_CAFFE2_CMAKE_FLAGS+=("-DATEN_NO_TEST=ON")
         ;;
-    12.4)
+    12.6)
         TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST};9.0"
         EXTRA_CAFFE2_CMAKE_FLAGS+=("-DATEN_NO_TEST=ON")
         ;;
@@ -86,14 +85,15 @@ fi
 mkdir -p "$PYTORCH_FINAL_PACKAGE_DIR" || true
 
 OS_NAME=$(awk -F= '/^NAME/{print $2}' /etc/os-release)
-if [[ "$OS_NAME" == *"CentOS Linux"* ]]; then
-    LIBGOMP_PATH="/usr/lib64/libgomp.so.1"
-elif [[ "$OS_NAME" == *"AlmaLinux"* ]]; then
+if [[ "$OS_NAME" == *"AlmaLinux"* ]]; then
     LIBGOMP_PATH="/usr/lib64/libgomp.so.1"
 elif [[ "$OS_NAME" == *"Red Hat Enterprise Linux"* ]]; then
     LIBGOMP_PATH="/usr/lib64/libgomp.so.1"
 elif [[ "$OS_NAME" == *"Ubuntu"* ]]; then
     LIBGOMP_PATH="/usr/lib/x86_64-linux-gnu/libgomp.so.1"
+else
+    echo "Unknown OS: '$OS_NAME'"
+    exit 1
 fi
 
 DEPS_LIST=(
@@ -103,18 +103,9 @@ DEPS_SONAME=(
     "libgomp.so.1"
 )
 
-# CUDA 11.8 have to ship the libcusparseLt.so.0 with the binary
-# since nvidia-cusparselt-cu11 is not available in PYPI
-if [[ $USE_CUSPARSELT == "1" && $CUDA_VERSION == "11.8" ]]; then
-        DEPS_SONAME+=(
-            "libcusparseLt.so.0"
-        )
-        DEPS_LIST+=(
-            "/usr/local/cuda/lib64/libcusparseLt.so.0"
-        )
-fi
 
-if [[ $CUDA_VERSION == "12.4" || $CUDA_VERSION == "12.6" ]]; then
+# CUDA_VERSION 12.6, 12.8
+if [[ $CUDA_VERSION == 12* ]]; then
     export USE_STATIC_CUDNN=0
     # Try parallelizing nvcc as well
     export TORCH_NVCC_FLAGS="-Xfatbin -compress-all --threads 2"
@@ -137,6 +128,8 @@ if [[ $CUDA_VERSION == "12.4" || $CUDA_VERSION == "12.6" ]]; then
             "/usr/local/cuda/lib64/libnvToolsExt.so.1"
             "/usr/local/cuda/lib64/libnvrtc.so.12"
             "/usr/local/cuda/lib64/libnvrtc-builtins.so"
+            "/usr/local/cuda/lib64/libcufile.so.0"
+            "/usr/local/cuda/lib64/libcufile_rdma.so.1"
         )
         DEPS_SONAME+=(
             "libcudnn_adv.so.9"
@@ -154,6 +147,8 @@ if [[ $CUDA_VERSION == "12.4" || $CUDA_VERSION == "12.6" ]]; then
             "libnvToolsExt.so.1"
             "libnvrtc.so.12"
             "libnvrtc-builtins.so"
+            "libcufile.so.0"
+            "libcufile_rdma.so.1"
         )
     else
         echo "Using nvidia libs from pypi."
@@ -170,6 +165,7 @@ if [[ $CUDA_VERSION == "12.4" || $CUDA_VERSION == "12.6" ]]; then
             '$ORIGIN/../../cusparselt/lib'
             '$ORIGIN/../../nvidia/nccl/lib'
             '$ORIGIN/../../nvidia/nvtx/lib'
+            '$ORIGIN/../../nvidia/cufile/lib'
         )
         CUDA_RPATHS=$(IFS=: ; echo "${CUDA_RPATHS[*]}")
         export C_SO_RPATH=$CUDA_RPATHS':$ORIGIN:$ORIGIN/lib'
@@ -185,10 +181,24 @@ if [[ $CUDA_VERSION == "12.4" || $CUDA_VERSION == "12.6" ]]; then
     fi
 elif [[ $CUDA_VERSION == "11.8" ]]; then
     export USE_STATIC_CUDNN=0
+    # Turn USE_CUFILE off for CUDA 11.8 since nvidia-cufile-cu11 and 1.9.0.20 are
+    # not available in PYPI
+    export USE_CUFILE=0
     # Try parallelizing nvcc as well
     export TORCH_NVCC_FLAGS="-Xfatbin -compress-all --threads 2"
     # Bundle ptxas into the wheel, see https://github.com/pytorch/pytorch/pull/119750
     export BUILD_BUNDLE_PTXAS=1
+
+    # CUDA 11.8 have to ship the libcusparseLt.so.0 with the binary
+    # since nvidia-cusparselt-cu11 is not available in PYPI
+    if [[ $USE_CUSPARSELT == "1" ]]; then
+        DEPS_SONAME+=(
+            "libcusparseLt.so.0"
+        )
+        DEPS_LIST+=(
+            "/usr/local/cuda/lib64/libcusparseLt.so.0"
+        )
+    fi
 
     if [[ -z "$PYTORCH_EXTRA_INSTALL_REQUIREMENTS" ]]; then
         echo "Bundling with cudnn and cublas."

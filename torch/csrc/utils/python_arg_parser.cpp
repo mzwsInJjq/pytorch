@@ -48,6 +48,7 @@ static std::unordered_map<std::string, ParameterType> type_map = {
     {"std::string", ParameterType::STRING},
     {"c10::string_view", ParameterType::STRING},
     {"std::string_view", ParameterType::STRING},
+    {"::std::string_view", ParameterType::STRING},
     {"Dimname", ParameterType::DIMNAME},
     {"DimnameList", ParameterType::DIMNAME_LIST},
     {"ScalarList", ParameterType::SCALAR_LIST},
@@ -888,7 +889,7 @@ static bool is_int_or_symint(PyObject* obj) {
   // for regular tensors it's redundant with the test below.
   if (THPVariable_Check(obj)) {
     auto& var = THPVariable_Unpack(obj);
-    if (TORCH_GUARD_SIZE_OBLIVIOUS(var.sym_numel().sym_eq(1)) &&
+    if (TORCH_GUARD_OR_FALSE(var.sym_numel().sym_eq(1)) &&
         at::isIntegralType(var.dtype().toScalarType(), /*include_bool*/ true)) {
       return true;
     }
