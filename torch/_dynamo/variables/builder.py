@@ -51,6 +51,7 @@ from torch._dynamo.utils import (
     is_torch_sym,
     set_feature_use,
 )
+from torch._functorch._aot_autograd.functional_utils import from_fun, to_fun
 from torch._guards import TracingContext
 from torch._higher_order_ops.torchbind import call_torchbind
 from torch._ops import HigherOrderOperator
@@ -2012,10 +2013,18 @@ class VariableBuilder:
         # then the relevant SubgraphTracer will lift it to being an input of
         # the subgraph.
         # See NOTE [HigherOrderOperator tracing design] for more details.
+        # Need to handle weird edge case where value is already a functional tensor...
+        if torch._is_functional_tensor(value):
+            val = torch._from_functional_tensor(value)
+        else:
+            val = value
 
-        example_value = wrap_to_fake_tensor_and_record(
-            value, tx=self.tx, is_tensor=True, source=source
-        )
+        with self.tx.functional_mode:
+            example_value = to_fun(
+                wrap_to_fake_tensor_and_record(
+                    val, tx=self.tx, is_tensor=True, source=source
+                )
+            )
 
         tensor_proxy = self.tx.output.root_tracer.create_graph_input(
             re.sub(r"[^a-zA-Z0-9]+", "_", self.name),

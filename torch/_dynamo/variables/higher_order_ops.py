@@ -1850,7 +1850,7 @@ class ScanHigherOrderVariable(TorchHigherOrderOperatorVariable):
             additional_inputs_proxy,
         )
 
-        with tx.fake_mode:
+        with tx.fake_mode, tx.functional_mode:
             example_carry = [
                 init_p.node.meta["example_value"].clone() for init_p in init_proxy
             ]

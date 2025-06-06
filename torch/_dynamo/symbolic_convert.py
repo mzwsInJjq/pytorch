@@ -3146,6 +3146,10 @@ class InstructionTranslatorBase(
     def fake_mode(self):
         return self.output.tracing_context.fake_mode
 
+    @property
+    def functional_mode(self):
+        return self.output.tracing_context.functional_mode
+
     @contextlib.contextmanager
     def strict_translation_mode(self, check_fn: Callable[[VariableTracker], bool]):
         """
@@ -3986,6 +3990,10 @@ class InliningInstructionTranslator(InstructionTranslatorBase):
     @property
     def fake_mode(self):
         return self.parent.fake_mode
+
+    @property
+    def functional_mode(self):
+        return self.parent.functional_mode
 
     def run_ctx_mgr(self):
         return TracingContext.current_frame(self.parent.frame_summary())
