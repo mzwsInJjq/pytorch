@@ -134,4 +134,7 @@ def build_pytorch(
     )
     if cmake_only:
         return
+    pre_build_command = os.getenv("PRE_BUILD_COMMAND")
+    if pre_build_command:
+        subprocess.check_call(pre_build_command.split(), shell=True)
     cmake.build(my_env)
