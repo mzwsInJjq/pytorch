@@ -27,7 +27,7 @@ cmake --version
 echo "Environment variables:"
 env
 
-export CUDA_NVCC_EXECUTABLE=/opt/cache/lib/nvcc
+export CMAKE_CUDA_COMPILER_LAUNCHER=/opt/cache/bin/sccache
 
 if [[ "$BUILD_ENVIRONMENT" == *cuda* ]]; then
   # Use jemalloc during compilation to mitigate https://github.com/pytorch/pytorch/issues/116289
