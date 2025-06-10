@@ -136,8 +136,16 @@ def build_pytorch(
         return
     pre_build_command = os.getenv("PRE_BUILD_COMMAND")
     if pre_build_command:
-        print(f"Running pre-build command: {pre_build_command}")
-        output = subprocess.check_output(pre_build_command, shell=True)
-        print(output.decode("utf-8"))
-        print("Done running pre-build command")
+        try:
+            output = subprocess.check_output(
+                pre_build_command,
+                shell=True,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+            )
+        except subprocess.CalledProcessError as e:
+            print("Command failed with return code:", e.returncode)
+            print("Output (stdout and stderr):")
+            print(e.output)
+            raise
     cmake.build(my_env)
