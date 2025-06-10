@@ -187,7 +187,7 @@ target_compile_definitions(flash_attention PRIVATE
   FLASHATTENTION_DISABLE_ALIBI    # Disable alibi attention as it's not currently used
   FLASHATTENTION_DISABLE_SOFTCAP
   UNFUSE_FMA                      # Addressing issue #121558
-  FORCING_SCCACHE_MISS=2
+  MAYBE_FORCE_FORCE_SCCACHE_MISS=2
 )
 
 set_target_properties(flash_attention PROPERTIES POSITION_INDEPENDENT_CODE ON)
